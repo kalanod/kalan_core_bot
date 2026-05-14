@@ -26,6 +26,8 @@ async def handle_text(
         return
 
     sender_telegram_id = message.from_user.id
+    if not await user_store.has_user(sender_telegram_id):
+        return
     reply_to_text_message_id = None
     if message.reply_to_message is not None:
         reply_to_text_message_id = await user_store.get_replied_incoming_id(
