@@ -36,6 +36,10 @@ class User(Base):
         back_populates="sender",
         foreign_keys="TextMessage.sender_id",
     )
+    media_messages: Mapped[list["MediaMessage"]] = relationship(
+        back_populates="sender",
+        foreign_keys="MediaMessage.sender_id",
+    )
 
 
 class Kalan(Base):
@@ -54,6 +58,101 @@ class Kalan(Base):
     is_alive: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
 
     owner: Mapped[User] = relationship(back_populates="kalans")
+    media_messages: Mapped[list["MediaMessage"]] = relationship(back_populates="kalan")
+
+
+class MediaMessage(Base):
+    """Telegram media message metadata persisted for fan-out broadcasts."""
+
+    __tablename__ = "media_messages"
+    __table_args__ = (
+        UniqueConstraint(
+            "telegram_chat_id",
+            "telegram_message_id",
+            name="uq_media_messages_chat_message",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_message_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sender_telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    recipient_telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    media_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    caption: Mapped[str | None] = mapped_column(Text, nullable=True)
+    date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    sender_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    kalan_id: Mapped[int] = mapped_column(ForeignKey("kalans.id", ondelete="CASCADE"), nullable=False)
+    mirrored_from_media_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    sender: Mapped[User | None] = relationship(
+        back_populates="media_messages",
+        foreign_keys=[sender_id],
+    )
+    kalan: Mapped[Kalan] = relationship(back_populates="media_messages")
+
+
+class MediaDelivery(Base):
+    """Per-recipient state for a media package sent by the bot."""
+
+    __tablename__ = "media_deliveries"
+    __table_args__ = (
+        UniqueConstraint(
+            "incoming_media_message_id",
+            "recipient_telegram_id",
+            name="uq_media_deliveries_incoming_recipient",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    incoming_media_message_id: Mapped[int] = mapped_column(
+        ForeignKey("media_messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    outgoing_media_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    recipient_telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    telegram_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class MediaReactionButton(Base):
+    """Persisted recipient-specific inline button for media reaction callbacks."""
+
+    __tablename__ = "media_reaction_buttons"
+    __table_args__ = (
+        UniqueConstraint("delivery_id", "action", name="uq_media_buttons_delivery_action"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    delivery_id: Mapped[int] = mapped_column(
+        ForeignKey("media_deliveries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    recipient_telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    callback_data: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    clicked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class TextMessage(Base):
