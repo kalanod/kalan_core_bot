@@ -26,11 +26,13 @@ class BotApplication:
 
 
 async def on_startup(
+    bot: Bot,
     engine: AsyncEngine,
     session_factory: async_sessionmaker[AsyncSession],
     user_store: UserStore,
 ) -> None:
     """Prepare external resources and warm in-memory state before polling starts."""
+    await bot.delete_my_commands()
     await create_database_schema(engine)
     async with session_factory() as session:
         telegram_ids = await UserService(session).list_known_telegram_ids()

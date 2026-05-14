@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     postgres_user: str = Field(default="kalan_core_bot", alias="POSTGRES_USER")
     postgres_password: SecretStr = Field(alias="POSTGRES_PASSWORD")
     database_url: SecretStr = Field(alias="DATABASE_URL")
-    allow_list: str = Field(default="", alias="ALLOW_LIST")
+    allow_list: list[str] = Field(default_factory=list, alias="ALLOW_LIST")
 
     @property
     def allowed_usernames(self) -> frozenset[str]:

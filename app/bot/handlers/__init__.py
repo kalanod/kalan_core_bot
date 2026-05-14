@@ -2,7 +2,7 @@
 
 from aiogram import Dispatcher, Router
 
-from app.bot.handlers import health, media, start, text
+from app.bot.handlers import commands, health, media, start, text
 
 
 def setup_routers(dispatcher: Dispatcher) -> None:
@@ -10,6 +10,7 @@ def setup_routers(dispatcher: Dispatcher) -> None:
     root_router = Router(name="root")
     root_router.include_router(health.router)
     root_router.include_router(start.router)
+    root_router.include_router(commands.router)
     root_router.include_router(media.router)
     root_router.include_router(text.router)
     dispatcher.include_router(root_router)

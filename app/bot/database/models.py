@@ -54,8 +54,12 @@ class Kalan(Base):
     date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    is_alive: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    owner_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    is_alive: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
 
     owner: Mapped[User] = relationship(back_populates="kalans")
     media_messages: Mapped[list["MediaMessage"]] = relationship(back_populates="kalan")
@@ -89,10 +93,15 @@ class MediaMessage(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    kalan_id: Mapped[int] = mapped_column(ForeignKey("kalans.id", ondelete="CASCADE"), nullable=False)
+    kalan_id: Mapped[int] = mapped_column(
+        ForeignKey("kalans.id", ondelete="CASCADE"), nullable=False
+    )
     mirrored_from_media_message_id: Mapped[int | None] = mapped_column(
         ForeignKey("media_messages.id", ondelete="SET NULL"),
         nullable=True,
+    )
+    is_alive: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
     )
 
     sender: Mapped[User | None] = relationship(
@@ -127,6 +136,9 @@ class MediaDelivery(Base):
     telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     telegram_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    is_alive: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
