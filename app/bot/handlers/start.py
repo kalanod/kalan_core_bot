@@ -2,11 +2,12 @@
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+import logging
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 from aiogram import F, Router
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -17,6 +18,7 @@ from app.bot.services import UserService, UserStore
 from app.bot.utils.access import is_username_allowed
 
 router = Router(name="start")
+logger = logging.getLogger(__name__)
 
 START_IMAGE_PATH = Path(__file__).resolve().parents[2] / "static" / "images" / "init.jpg"
 RESTRICTED_IMAGE_PATH = Path(__file__).resolve().parents[2] / "static" / "images" / "restricted.png"
@@ -31,6 +33,7 @@ START_MESSAGE = (
     "Торжественно обещаю, я проведу это лето ярко!"
 )
 WELCOME_MESSAGE = "добро пожаловать в клуб"
+RESTRICTED_MESSAGE = "Доступ к клубу пока закрыт."
 PROJECT_END_DATE = date(2026, 9, 1)
 
 
@@ -77,13 +80,37 @@ async def delete_previous_start_messages(
             continue
 
 
+def is_non_empty_file(path: Path) -> bool:
+    """Return whether a local asset can be uploaded to Telegram."""
+    return path.is_file() and path.stat().st_size > 0
+
+
 async def send_start_screen(message: Message, start_screen: StartScreen) -> Message:
-    """Send a resolved onboarding or restricted screen."""
-    return await message.answer_photo(
-        photo=FSInputFile(start_screen.image_path),
-        caption=start_screen.caption,
-        reply_markup=start_screen.reply_markup,
-    )
+    """Send a resolved onboarding or restricted screen.
+
+    Telegram rejects empty local uploads with ``file must be non-empty``.  Falling back to a
+    text message keeps the /start flow alive when a static asset is missing or mounted empty.
+    """
+    if is_non_empty_file(start_screen.image_path):
+        return await message.answer_photo(
+            photo=FSInputFile(start_screen.image_path),
+            caption=start_screen.caption,
+            reply_markup=start_screen.reply_markup,
+        )
+
+    logger.warning("Start screen image is missing or empty: %s", start_screen.image_path)
+    fallback_text = start_screen.caption or RESTRICTED_MESSAGE
+    return await message.answer(text=fallback_text, reply_markup=start_screen.reply_markup)
+
+
+async def answer_callback_safely(callback: CallbackQuery, text: str | None = None) -> None:
+    """Acknowledge callback queries without crashing on expired Telegram query IDs."""
+    try:
+        await callback.answer(text)
+    except TelegramBadRequest as exc:
+        if "query is too old" not in exc.message and "query ID is invalid" not in exc.message:
+            raise
+        logger.info("Ignoring expired callback query answer: %s", exc.message)
 
 
 @router.message(CommandStart())
@@ -124,11 +151,16 @@ async def handle_start_accept_callback(
 ) -> None:
     """Register the Telegram user only after an allowed username accepts the club value."""
     if not is_username_allowed(callback.from_user.username, settings.allowed_usernames):
-        await callback.answer()
+        await answer_callback_safely(callback)
         if callback.message is not None:
             await callback.message.edit_reply_markup(reply_markup=None)
-            await callback.message.answer_photo(photo=FSInputFile(RESTRICTED_IMAGE_PATH))
+            await send_start_screen(
+                callback.message,
+                StartScreen(image_path=RESTRICTED_IMAGE_PATH, caption=None, reply_markup=None),
+            )
         return
+
+    await answer_callback_safely(callback)
 
     if callback.message is not None:
         await callback.message.edit_reply_markup(reply_markup=None)
@@ -138,6 +170,5 @@ async def handle_start_accept_callback(
         await UserService(session).ensure_registered(telegram_id=callback.from_user.id)
     await user_store.add_user(callback.from_user.id)
 
-    await callback.answer()
     if callback.message is not None:
         await callback.message.answer(WELCOME_MESSAGE)
