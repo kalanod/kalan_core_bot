@@ -5,6 +5,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 OTTER_ACTION = "otter"
 STONE_FACE_ACTION = "stone_face"
 UNDO_REACTION_ACTION = "undo"
+DELETE_MEDIA_ACTION = "delete"
 
 
 def build_media_reaction_keyboard(
@@ -48,3 +49,19 @@ def build_media_score_text(*, approves: int, declines: int) -> str:
     otter_count = 0 if total <= 0 else round((approves / total) * 20)
     otter_count = min(20, max(0, otter_count))
     return "🦦" * otter_count + "🗿" * (20 - otter_count)
+
+
+def build_media_delete_score_keyboard(
+    *, approves: int, declines: int, delete_callback_data: str
+) -> InlineKeyboardMarkup:
+    """Build sender-facing score button that deletes the media package when pressed."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=build_media_score_text(approves=approves, declines=declines),
+                    callback_data=delete_callback_data,
+                )
+            ]
+        ]
+    )

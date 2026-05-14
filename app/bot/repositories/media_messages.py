@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.database.models import MediaDelivery, MediaMessage, MediaReaction, MediaReactionButton
+from app.bot.keyboards.media import DELETE_MEDIA_ACTION, UNDO_REACTION_ACTION
 
 
 class MediaMessageRepository:
@@ -80,6 +81,7 @@ class MediaMessageRepository:
         delivery.telegram_chat_id = telegram_chat_id
         delivery.telegram_message_id = telegram_message_id
         delivery.status = "sent"
+        delivery.is_alive = True
         await self._session.flush()
         return delivery
 
@@ -178,4 +180,75 @@ class MediaMessageRepository:
     async def delete_reaction_choice(self, reaction: MediaReaction) -> None:
         """Delete a recipient's persisted media reaction choice."""
         await self._session.delete(reaction)
+        await self._session.flush()
+
+    async def list_sent_deliveries_for_kalan(self, kalan_id: int) -> list[MediaDelivery]:
+        """Return alive Telegram delivery messages for one persisted media item."""
+        result = await self._session.execute(
+            select(MediaDelivery)
+            .join(MediaMessage, MediaDelivery.incoming_media_message_id == MediaMessage.id)
+            .where(
+                MediaMessage.kalan_id == kalan_id,
+                MediaDelivery.is_alive.is_(True),
+                MediaDelivery.status == "sent",
+                MediaDelivery.telegram_chat_id.is_not(None),
+                MediaDelivery.telegram_message_id.is_not(None),
+            )
+        )
+        return list(result.scalars().all())
+
+    async def list_reacted_deliveries_for_kalan(
+        self, kalan_id: int
+    ) -> list[tuple[MediaDelivery, str]]:
+        """Return alive recipient messages currently showing a score/undo button."""
+        result = await self._session.execute(
+            select(MediaDelivery, MediaReactionButton.callback_data)
+            .join(MediaMessage, MediaDelivery.incoming_media_message_id == MediaMessage.id)
+            .join(MediaReaction, MediaReaction.delivery_id == MediaDelivery.id)
+            .join(
+                MediaReactionButton,
+                (MediaReactionButton.delivery_id == MediaDelivery.id)
+                & (MediaReactionButton.action == UNDO_REACTION_ACTION),
+            )
+            .where(
+                MediaMessage.kalan_id == kalan_id,
+                MediaDelivery.is_alive.is_(True),
+                MediaDelivery.status == "sent",
+                MediaDelivery.telegram_chat_id.is_not(None),
+                MediaDelivery.telegram_message_id.is_not(None),
+            )
+        )
+        return [(delivery, callback_data) for delivery, callback_data in result.all()]
+
+    async def list_sender_status_deliveries_for_kalan(
+        self, kalan_id: int
+    ) -> list[tuple[MediaDelivery, str]]:
+        """Return alive sender-facing status messages with delete callback data."""
+        result = await self._session.execute(
+            select(MediaDelivery, MediaReactionButton.callback_data)
+            .join(MediaMessage, MediaDelivery.incoming_media_message_id == MediaMessage.id)
+            .join(
+                MediaReactionButton,
+                (MediaReactionButton.delivery_id == MediaDelivery.id)
+                & (MediaReactionButton.action == DELETE_MEDIA_ACTION),
+            )
+            .where(
+                MediaMessage.kalan_id == kalan_id,
+                MediaDelivery.is_alive.is_(True),
+                MediaDelivery.status == "sent",
+                MediaDelivery.telegram_chat_id.is_not(None),
+                MediaDelivery.telegram_message_id.is_not(None),
+            )
+        )
+        return [(delivery, callback_data) for delivery, callback_data in result.all()]
+
+    async def soft_delete_message(self, media_message: MediaMessage) -> None:
+        """Mark one persisted Telegram media-related message as not alive."""
+        media_message.is_alive = False
+        await self._session.flush()
+
+    async def soft_delete_delivery(self, delivery: MediaDelivery) -> None:
+        """Mark one persisted Telegram delivery/status message as not alive."""
+        delivery.is_alive = False
+        delivery.status = "deleted"
         await self._session.flush()

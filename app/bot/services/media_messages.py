@@ -7,10 +7,16 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.database.models import Kalan, MediaDelivery, MediaMessage, MediaReactionButton, User
-from app.bot.keyboards.media import OTTER_ACTION, STONE_FACE_ACTION, UNDO_REACTION_ACTION
+from app.bot.keyboards.media import (
+    DELETE_MEDIA_ACTION,
+    OTTER_ACTION,
+    STONE_FACE_ACTION,
+    UNDO_REACTION_ACTION,
+)
 from app.bot.repositories import KalanRepository, MediaMessageRepository, UserRepository
 
 REACTION_ACTIONS = {OTTER_ACTION, STONE_FACE_ACTION}
+MEDIA_ACTIONS = REACTION_ACTIONS | {UNDO_REACTION_ACTION, DELETE_MEDIA_ACTION}
 
 
 @dataclass(frozen=True)
@@ -20,6 +26,8 @@ class IncomingMediaRegistrationResult:
     message: MediaMessage
     sender_created: bool
     kalan_created: bool
+    approves: int
+    declines: int
 
 
 @dataclass(frozen=True)
@@ -29,6 +37,14 @@ class PreparedMediaDelivery:
     delivery: MediaDelivery
     otter_callback_data: str
     stone_face_callback_data: str
+
+
+@dataclass(frozen=True)
+class PreparedSenderStatus:
+    """Persisted sender-facing status reply plus its delete callback payload."""
+
+    delivery: MediaDelivery
+    delete_callback_data: str
 
 
 @dataclass(frozen=True)
@@ -42,6 +58,24 @@ class MediaReactionToggleResult:
     otter_callback_data: str | None = None
     stone_face_callback_data: str | None = None
     undo_callback_data: str | None = None
+    score_targets: tuple["MediaScoreUpdateTarget", ...] = ()
+
+
+@dataclass(frozen=True)
+class MediaScoreUpdateTarget:
+    """Telegram message whose progress-bar keyboard should be synchronized."""
+
+    telegram_chat_id: int
+    telegram_message_id: int
+    callback_data: str
+
+
+@dataclass(frozen=True)
+class MediaDeletionResult:
+    """State returned after a sender asks to delete a media package."""
+
+    status: str
+    delete_targets: tuple[tuple[int, int], ...] = ()
 
 
 class MediaMessageService:
@@ -76,6 +110,7 @@ class MediaMessageService:
             kalan_id=telegram_file_id,
             owner_id=user.id,
         )
+        kalan.is_alive = True
         media_message = await self._media_messages.create_message(
             telegram_message_id=telegram_message_id,
             telegram_chat_id=telegram_chat_id,
@@ -92,6 +127,8 @@ class MediaMessageService:
             message=media_message,
             sender_created=sender_created,
             kalan_created=kalan_created,
+            approves=kalan.approves,
+            declines=kalan.rejects,
         )
 
     async def prepare_delivery(
@@ -132,6 +169,60 @@ class MediaMessageService:
             otter_callback_data=otter_callback_data,
             stone_face_callback_data=stone_face_callback_data,
         )
+
+    async def prepare_sender_status(
+        self,
+        *,
+        incoming_media_message_id: int,
+        sender_telegram_id: int,
+    ) -> PreparedSenderStatus:
+        """Persist sender-facing reply state with a progress-bar delete button."""
+        delivery = await self._media_messages.create_delivery(
+            incoming_media_message_id=incoming_media_message_id,
+            recipient_telegram_id=sender_telegram_id,
+        )
+        delete_callback_data = self._build_callback_data(delivery.id, DELETE_MEDIA_ACTION)
+        await self._media_messages.create_reaction_button(
+            delivery_id=delivery.id,
+            recipient_telegram_id=sender_telegram_id,
+            action=DELETE_MEDIA_ACTION,
+            callback_data=delete_callback_data,
+        )
+        await self._session.commit()
+        return PreparedSenderStatus(delivery=delivery, delete_callback_data=delete_callback_data)
+
+    async def register_sender_status(
+        self,
+        *,
+        sender_telegram_id: int,
+        telegram_chat_id: int,
+        telegram_message_id: int,
+        date: datetime | None,
+        kalan_id: int,
+        mirrored_from_media_message_id: int,
+        delivery_id: int,
+    ) -> MediaMessage:
+        """Persist the bot reply that shows the sender the media progress bar."""
+        media_message = await self._media_messages.create_message(
+            telegram_message_id=telegram_message_id,
+            telegram_chat_id=telegram_chat_id,
+            sender_telegram_id=sender_telegram_id,
+            recipient_telegram_id=sender_telegram_id,
+            direction="status",
+            media_type="status",
+            caption="калан core",
+            date=date,
+            kalan_id=kalan_id,
+            mirrored_from_media_message_id=mirrored_from_media_message_id,
+        )
+        await self._media_messages.mark_delivery_sent(
+            delivery_id=delivery_id,
+            outgoing_media_message_id=media_message.id,
+            telegram_chat_id=telegram_chat_id,
+            telegram_message_id=telegram_message_id,
+        )
+        await self._session.commit()
+        return media_message
 
     async def register_outgoing(
         self,
@@ -183,13 +274,13 @@ class MediaMessageService:
             await self._session.commit()
             return MediaReactionToggleResult(status="not_found")
 
-        if button.action not in REACTION_ACTIONS | {UNDO_REACTION_ACTION}:
+        if button.action not in MEDIA_ACTIONS:
             await self._session.commit()
             return MediaReactionToggleResult(status="not_found")
 
         await self._media_messages.mark_reaction_button_clicked(callback_data=callback_data)
         delivery = await self._media_messages.get_delivery(button.delivery_id)
-        if delivery is None:
+        if delivery is None or not delivery.is_alive:
             await self._session.commit()
             return MediaReactionToggleResult(status="not_found")
 
@@ -199,9 +290,13 @@ class MediaMessageService:
             return MediaReactionToggleResult(status="not_found")
 
         kalan = await self._session.get(Kalan, media_message.kalan_id)
-        if kalan is None:
+        if kalan is None or not kalan.is_alive:
             await self._session.commit()
             return MediaReactionToggleResult(status="not_found")
+
+        if button.action == DELETE_MEDIA_ACTION:
+            await self._session.commit()
+            return MediaReactionToggleResult(status="delete_requested")
 
         existing_reaction = await self._media_messages.get_reaction_choice(
             delivery_id=delivery.id,
@@ -213,6 +308,7 @@ class MediaMessageService:
             await self._media_messages.delete_reaction_choice(existing_reaction)
             otter_button = await self._required_button(delivery.id, OTTER_ACTION)
             stone_face_button = await self._required_button(delivery.id, STONE_FACE_ACTION)
+            score_targets = await self._score_update_targets(kalan.id)
             await self._session.commit()
             return MediaReactionToggleResult(
                 status="cancelled",
@@ -221,14 +317,17 @@ class MediaMessageService:
                 declines=kalan.rejects,
                 otter_callback_data=otter_button.callback_data,
                 stone_face_callback_data=stone_face_button.callback_data,
+                score_targets=score_targets,
             )
 
         if button.action == UNDO_REACTION_ACTION:
+            score_targets = await self._score_update_targets(kalan.id)
             await self._session.commit()
             return MediaReactionToggleResult(
                 status="unchanged",
                 approves=kalan.approves,
                 declines=kalan.rejects,
+                score_targets=score_targets,
             )
 
         await self._media_messages.create_reaction_choice(
@@ -242,6 +341,7 @@ class MediaMessageService:
             recipient_telegram_id=user_telegram_id,
             action=UNDO_REACTION_ACTION,
         )
+        score_targets = await self._score_update_targets(kalan.id)
         await self._session.commit()
         return MediaReactionToggleResult(
             status="applied",
@@ -249,7 +349,92 @@ class MediaMessageService:
             approves=kalan.approves,
             declines=kalan.rejects,
             undo_callback_data=undo_button.callback_data,
+            score_targets=score_targets,
         )
+
+    async def delete_media_package(
+        self, *, callback_data: str, user_telegram_id: int
+    ) -> MediaDeletionResult:
+        """Soft-delete one media package when the sender presses the progress bar."""
+        button = await self._media_messages.get_reaction_button_by_callback_data(callback_data)
+        if (
+            button is None
+            or button.action != DELETE_MEDIA_ACTION
+            or button.recipient_telegram_id != user_telegram_id
+        ):
+            await self._session.commit()
+            return MediaDeletionResult(status="not_found")
+
+        delivery = await self._media_messages.get_delivery(button.delivery_id)
+        if delivery is None or not delivery.is_alive:
+            await self._session.commit()
+            return MediaDeletionResult(status="not_found")
+
+        incoming_message = await self._session.get(MediaMessage, delivery.incoming_media_message_id)
+        if incoming_message is None or incoming_message.sender_telegram_id != user_telegram_id:
+            await self._session.commit()
+            return MediaDeletionResult(status="not_found")
+
+        kalan = await self._session.get(Kalan, incoming_message.kalan_id)
+        if kalan is None or not kalan.is_alive:
+            await self._session.commit()
+            return MediaDeletionResult(status="not_found")
+
+        delete_targets: list[tuple[int, int]] = [
+            (incoming_message.telegram_chat_id, incoming_message.telegram_message_id)
+        ]
+        await self._media_messages.soft_delete_message(incoming_message)
+        kalan.is_alive = False
+
+        deliveries = await self._media_messages.list_sent_deliveries_for_kalan(kalan.id)
+        for sent_delivery in deliveries:
+            if (
+                sent_delivery.telegram_chat_id is not None
+                and sent_delivery.telegram_message_id is not None
+            ):
+                delete_targets.append(
+                    (sent_delivery.telegram_chat_id, sent_delivery.telegram_message_id)
+                )
+            await self._media_messages.soft_delete_delivery(sent_delivery)
+            if sent_delivery.outgoing_media_message_id is not None:
+                outgoing_message = await self._session.get(
+                    MediaMessage, sent_delivery.outgoing_media_message_id
+                )
+                if outgoing_message is not None:
+                    await self._media_messages.soft_delete_message(outgoing_message)
+
+        await self._session.commit()
+        return MediaDeletionResult(
+            status="deleted", delete_targets=tuple(dict.fromkeys(delete_targets))
+        )
+
+    async def _score_update_targets(self, kalan_id: int) -> tuple[MediaScoreUpdateTarget, ...]:
+        """Collect all alive messages that are currently expected to show a progress bar."""
+        targets: list[MediaScoreUpdateTarget] = []
+        for (
+            delivery,
+            callback_data,
+        ) in await self._media_messages.list_sender_status_deliveries_for_kalan(kalan_id):
+            if delivery.telegram_chat_id is not None and delivery.telegram_message_id is not None:
+                targets.append(
+                    MediaScoreUpdateTarget(
+                        telegram_chat_id=delivery.telegram_chat_id,
+                        telegram_message_id=delivery.telegram_message_id,
+                        callback_data=callback_data,
+                    )
+                )
+        for delivery, callback_data in await self._media_messages.list_reacted_deliveries_for_kalan(
+            kalan_id
+        ):
+            if delivery.telegram_chat_id is not None and delivery.telegram_message_id is not None:
+                targets.append(
+                    MediaScoreUpdateTarget(
+                        telegram_chat_id=delivery.telegram_chat_id,
+                        telegram_message_id=delivery.telegram_message_id,
+                        callback_data=callback_data,
+                    )
+                )
+        return tuple(targets)
 
     async def _required_button(self, delivery_id: int, action: str) -> MediaReactionButton:
         """Return an existing delivery button or raise if persisted state is inconsistent."""
