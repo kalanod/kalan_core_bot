@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.database.models import MediaDelivery, MediaMessage, MediaReactionButton
+from app.bot.database.models import MediaDelivery, MediaMessage, MediaReaction, MediaReactionButton
 
 
 class MediaMessageRepository:
@@ -133,3 +133,49 @@ class MediaMessageRepository:
         button.clicked_at = datetime.now(timezone.utc)
         await self._session.flush()
         return button
+
+    async def get_delivery(self, delivery_id: int) -> MediaDelivery | None:
+        """Return a media delivery by id."""
+        return await self._session.get(MediaDelivery, delivery_id)
+
+    async def get_reaction_button(
+        self, *, delivery_id: int, action: str
+    ) -> MediaReactionButton | None:
+        """Return one stored button for a delivery and action."""
+        result = await self._session.execute(
+            select(MediaReactionButton).where(
+                MediaReactionButton.delivery_id == delivery_id,
+                MediaReactionButton.action == action,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_reaction_choice(
+        self, *, delivery_id: int, recipient_telegram_id: int
+    ) -> MediaReaction | None:
+        """Return a recipient's persisted choice for a delivered media message."""
+        result = await self._session.execute(
+            select(MediaReaction).where(
+                MediaReaction.delivery_id == delivery_id,
+                MediaReaction.recipient_telegram_id == recipient_telegram_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def create_reaction_choice(
+        self, *, delivery_id: int, recipient_telegram_id: int, action: str
+    ) -> MediaReaction:
+        """Persist a recipient's media reaction choice."""
+        reaction = MediaReaction(
+            delivery_id=delivery_id,
+            recipient_telegram_id=recipient_telegram_id,
+            action=action,
+        )
+        self._session.add(reaction)
+        await self._session.flush()
+        return reaction
+
+    async def delete_reaction_choice(self, reaction: MediaReaction) -> None:
+        """Delete a recipient's persisted media reaction choice."""
+        await self._session.delete(reaction)
+        await self._session.flush()

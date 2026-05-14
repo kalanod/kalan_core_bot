@@ -155,6 +155,30 @@ class MediaReactionButton(Base):
     )
 
 
+class MediaReaction(Base):
+    """Persisted recipient choice for a delivered media message."""
+
+    __tablename__ = "media_reactions"
+    __table_args__ = (
+        UniqueConstraint(
+            "delivery_id",
+            "recipient_telegram_id",
+            name="uq_media_reactions_delivery_recipient",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    delivery_id: Mapped[int] = mapped_column(
+        ForeignKey("media_deliveries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    recipient_telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class TextMessage(Base):
     """Telegram text message metadata persisted for broadcast and reply tracking."""
 

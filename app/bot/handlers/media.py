@@ -5,7 +5,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.bot.keyboards.media import build_media_reaction_keyboard
+from app.bot.keyboards.media import build_media_reaction_keyboard, build_media_score_keyboard
 from app.bot.services import MediaMessageService, UserStore
 from app.bot.utils.media import extract_media
 
@@ -102,19 +102,46 @@ async def handle_media_reaction_callback(
     callback: CallbackQuery,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Load persisted button metadata and acknowledge media reactions for now."""
+    """Apply or undo media reactions and update the inline keyboard."""
     if callback.data is None:
         await callback.answer("Неизвестная кнопка", show_alert=True)
         return
 
     async with session_factory() as session:
-        button = await MediaMessageService(session).register_reaction_click(
+        result = await MediaMessageService(session).register_reaction_click(
             callback_data=callback.data,
             user_telegram_id=callback.from_user.id,
         )
 
-    if button is None:
+    if result.status == "not_found":
         await callback.answer("Кнопка не найдена или не для вас", show_alert=True)
         return
 
-    await callback.answer(f"Заглушка: обработаем реакцию {button.action}")
+    if result.status == "applied":
+        if result.undo_callback_data is not None and callback.message is not None:
+            await callback.message.edit_reply_markup(
+                reply_markup=build_media_score_keyboard(
+                    approves=result.approves,
+                    declines=result.declines,
+                    undo_callback_data=result.undo_callback_data,
+                )
+            )
+        await callback.answer("Голос учтён")
+        return
+
+    if result.status == "cancelled":
+        if (
+            result.otter_callback_data is not None
+            and result.stone_face_callback_data is not None
+            and callback.message is not None
+        ):
+            await callback.message.edit_reply_markup(
+                reply_markup=build_media_reaction_keyboard(
+                    otter_callback_data=result.otter_callback_data,
+                    stone_face_callback_data=result.stone_face_callback_data,
+                )
+            )
+        await callback.answer("Голос отменён")
+        return
+
+    await callback.answer("Голос уже отменён")

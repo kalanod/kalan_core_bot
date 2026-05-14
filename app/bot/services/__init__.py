@@ -4,6 +4,7 @@ from app.bot.services.kalans import KalanDeletionResult, KalanRegistrationResult
 from app.bot.services.media_messages import (
     IncomingMediaRegistrationResult,
     MediaMessageService,
+    MediaReactionToggleResult,
     PreparedMediaDelivery,
 )
 from app.bot.services.text_messages import IncomingTextRegistrationResult, TextMessageService
@@ -17,6 +18,7 @@ __all__ = [
     "IncomingMediaRegistrationResult",
     "IncomingTextRegistrationResult",
     "MediaMessageService",
+    "MediaReactionToggleResult",
     "PreparedMediaDelivery",
     "TextMessageService",
     "UserRegistrationResult",

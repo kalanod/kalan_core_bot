@@ -4,6 +4,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 OTTER_ACTION = "otter"
 STONE_FACE_ACTION = "stone_face"
+UNDO_REACTION_ACTION = "undo"
 
 
 def build_media_reaction_keyboard(
@@ -20,3 +21,30 @@ def build_media_reaction_keyboard(
             ]
         ]
     )
+
+
+def build_media_score_keyboard(
+    *,
+    approves: int,
+    declines: int,
+    undo_callback_data: str,
+) -> InlineKeyboardMarkup:
+    """Build one toggle button with a 20-symbol otter/stone-face score bar."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=build_media_score_text(approves=approves, declines=declines),
+                    callback_data=undo_callback_data,
+                )
+            ]
+        ]
+    )
+
+
+def build_media_score_text(*, approves: int, declines: int) -> str:
+    """Return a 20-symbol score bar based on the approve share."""
+    total = approves + declines
+    otter_count = 0 if total <= 0 else round((approves / total) * 20)
+    otter_count = min(20, max(0, otter_count))
+    return "🦦" * otter_count + "🗿" * (20 - otter_count)
