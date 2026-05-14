@@ -12,6 +12,7 @@ class UserStore:
     _user_ids: set[int] = field(default_factory=set)
     _bot_messages_to_incoming_ids: dict[tuple[int, int], int] = field(default_factory=dict)
     _incoming_ids_to_sent_messages: dict[int, dict[int, int]] = field(default_factory=dict)
+    _start_messages: dict[int, list[tuple[int, int]]] = field(default_factory=dict)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def replace_users(self, user_ids: Iterable[int]) -> None:
@@ -33,6 +34,22 @@ class UserStore:
         """Return all known users except the provided sender id."""
         async with self._lock:
             return [user_id for user_id in self._user_ids if user_id != telegram_id]
+
+    async def remember_start_message(
+        self,
+        *,
+        telegram_id: int,
+        chat_id: int,
+        message_id: int,
+    ) -> None:
+        """Remember a bot onboarding message so future /start commands can delete it."""
+        async with self._lock:
+            self._start_messages.setdefault(telegram_id, []).append((chat_id, message_id))
+
+    async def pop_start_messages(self, telegram_id: int) -> list[tuple[int, int]]:
+        """Remove and return remembered onboarding messages for a Telegram user."""
+        async with self._lock:
+            return self._start_messages.pop(telegram_id, [])
 
     async def remember_sent_message(
         self,

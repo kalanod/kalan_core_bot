@@ -57,6 +57,7 @@ def create_app(settings: Settings | None = None) -> BotApplication:
         session_factory=session_factory,
         engine=engine,
         user_store=user_store,
+        settings=resolved_settings,
     )
     dispatcher.startup.register(on_startup)
     dispatcher.shutdown.register(on_shutdown)
