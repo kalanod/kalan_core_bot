@@ -6,6 +6,8 @@ from typing import Literal
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.bot.utils.access import parse_allow_list
+
 
 class Settings(BaseSettings):
     """Typed settings for the Telegram bot and infrastructure."""
@@ -22,6 +24,12 @@ class Settings(BaseSettings):
     postgres_user: str = Field(default="kalan_core_bot", alias="POSTGRES_USER")
     postgres_password: SecretStr = Field(alias="POSTGRES_PASSWORD")
     database_url: SecretStr = Field(alias="DATABASE_URL")
+    allow_list: str = Field(default="", alias="ALLOW_LIST")
+
+    @property
+    def allowed_usernames(self) -> frozenset[str]:
+        """Return normalized Telegram usernames allowed to enter onboarding."""
+        return parse_allow_list(self.allow_list)
 
 
 @lru_cache
