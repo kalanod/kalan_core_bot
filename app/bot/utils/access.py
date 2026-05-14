@@ -1,7 +1,6 @@
 """Access helpers for username allow-list checks."""
 
 from collections.abc import Iterable
-import re
 
 
 def normalize_username(username: str | None) -> str | None:
@@ -13,12 +12,12 @@ def normalize_username(username: str | None) -> str | None:
     return normalized or None
 
 
-def parse_allow_list(raw_allow_list: str) -> frozenset[str]:
-    """Parse comma-, semicolon-, whitespace-, or newline-separated Telegram usernames."""
+def parse_allow_list(raw_allow_list: Iterable[str]) -> frozenset[str]:
+    """Parse a Telegram username allow-list from an iterable of strings."""
     return frozenset(
         username
-        for chunk in re.split(r"[,;\s]+", raw_allow_list)
-        if (username := normalize_username(chunk)) is not None
+        for raw_username in raw_allow_list
+        if (username := normalize_username(raw_username)) is not None
     )
 
 
