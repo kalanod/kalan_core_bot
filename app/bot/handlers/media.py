@@ -22,12 +22,14 @@ async def handle_media(
     if message.from_user is None:
         return
 
+    sender_telegram_id = message.from_user.id
+    if not await user_store.has_user(sender_telegram_id):
+        return
+
     media = extract_media(message)
     if media is None:
         await message.answer("Пока я умею сохранять только фото и видео.")
         return
-
-    sender_telegram_id = message.from_user.id
     async with session_factory() as session:
         incoming_result = await MediaMessageService(session).register_incoming(
             sender_telegram_id=sender_telegram_id,

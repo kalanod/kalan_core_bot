@@ -24,6 +24,11 @@ class UserStore:
         async with self._lock:
             self._user_ids.add(telegram_id)
 
+    async def has_user(self, telegram_id: int) -> bool:
+        """Return whether the Telegram id belongs to an accepted club member."""
+        async with self._lock:
+            return telegram_id in self._user_ids
+
     async def other_users(self, telegram_id: int) -> list[int]:
         """Return all known users except the provided sender id."""
         async with self._lock:
