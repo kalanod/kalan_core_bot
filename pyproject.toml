@@ -25,4 +25,5 @@ src = ["app", "tests"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+pythonpath = ["."]
 testpaths = ["tests"]
