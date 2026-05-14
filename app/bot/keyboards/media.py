@@ -46,9 +46,9 @@ def build_media_score_keyboard(
 def build_media_score_text(*, approves: int, declines: int) -> str:
     """Return a 20-symbol score bar based on the approve share."""
     total = approves + declines
-    otter_count = 0 if total <= 0 else round((approves / total) * 20)
-    otter_count = min(20, max(0, otter_count))
-    return "🦦" * otter_count + "🗿" * (20 - otter_count)
+    otter_count = 0 if total <= 0 else round((approves / total) * 10)
+    otter_count = min(10, max(0, otter_count))
+    return "🦦" * otter_count + "🗿" * (10 - otter_count)
 
 
 def build_media_delete_score_keyboard(

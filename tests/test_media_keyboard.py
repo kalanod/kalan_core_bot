@@ -8,7 +8,7 @@ def test_media_score_text_has_twenty_symbols_for_balanced_score() -> None:
 
 
 def test_media_score_text_handles_empty_counters() -> None:
-    assert build_media_score_text(approves=0, declines=0) == "🗿" * 20
+    assert build_media_score_text(approves=0, declines=0) == "🗿" * 10
 
 
 def test_sender_delete_score_keyboard_uses_progress_bar_and_delete_callback() -> None:
