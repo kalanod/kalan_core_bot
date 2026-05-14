@@ -18,7 +18,7 @@ from app.bot.utils.access import is_username_allowed
 
 router = Router(name="start")
 
-START_IMAGE_PATH = Path(__file__).resolve().parents[2] / "static" / "images" / "init.png"
+START_IMAGE_PATH = Path(__file__).resolve().parents[2] / "static" / "images" / "init.jpg"
 RESTRICTED_IMAGE_PATH = Path(__file__).resolve().parents[2] / "static" / "images" / "restricted.png"
 START_MESSAGE = (
     "Добро пожаловать в летнюю коллекцию калан core, стань частью клуба анонимных "
