@@ -21,7 +21,18 @@ def test_settings_parses_allow_list_from_values() -> None:
         BOT_TOKEN="123456:test-token",
         POSTGRES_PASSWORD="test-password",
         DATABASE_URL="postgresql+asyncpg://user:password@postgres:5432/app",
-        ALLOW_LIST="@Alice,bob",
+        ALLOW_LIST=["@Alice", "bob"],
     )
+
+    assert settings.allowed_usernames == {"alice", "bob"}
+
+
+def test_settings_parses_allow_list_from_json_env(monkeypatch) -> None:
+    monkeypatch.setenv("BOT_TOKEN", "123456:test-token")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "test-password")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:password@postgres:5432/app")
+    monkeypatch.setenv("ALLOW_LIST", '["@Alice", "bob"]')
+
+    settings = Settings()
 
     assert settings.allowed_usernames == {"alice", "bob"}

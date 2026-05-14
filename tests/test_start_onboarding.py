@@ -51,7 +51,7 @@ def test_restricted_start_screen_contains_only_restricted_photo() -> None:
 
 
 def test_allow_list_parses_and_matches_normalized_usernames() -> None:
-    allow_list = parse_allow_list("@Alice, bob;\nCHARLIE delta")
+    allow_list = parse_allow_list(["@Alice", " bob ", "CHARLIE", "delta"])
 
     assert allow_list == {"alice", "bob", "charlie", "delta"}
     assert is_username_allowed("alice", allow_list)
