@@ -32,3 +32,7 @@ class UserService:
         user = await self._users.get_or_create(telegram_id)
         await self._session.commit()
         return UserRegistrationResult(user=user, created=True)
+
+    async def list_known_telegram_ids(self) -> list[int]:
+        """Return Telegram ids for all persisted users."""
+        return await self._users.list_telegram_ids()
