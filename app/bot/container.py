@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from app.bot.config import Settings, get_settings
 from app.bot.database import create_database_schema, create_engine, create_session_factory
 from app.bot.handlers import setup_routers
+from app.bot.services import UserService, UserStore
 
 
 @dataclass(frozen=True)
@@ -21,11 +22,19 @@ class BotApplication:
     settings: Settings
     engine: AsyncEngine
     session_factory: async_sessionmaker[AsyncSession]
+    user_store: UserStore
 
 
-async def on_startup(dispatcher: Dispatcher, engine: AsyncEngine) -> None:
-    """Prepare external resources before polling starts."""
+async def on_startup(
+    engine: AsyncEngine,
+    session_factory: async_sessionmaker[AsyncSession],
+    user_store: UserStore,
+) -> None:
+    """Prepare external resources and warm in-memory state before polling starts."""
     await create_database_schema(engine)
+    async with session_factory() as session:
+        telegram_ids = await UserService(session).list_known_telegram_ids()
+    await user_store.replace_users(telegram_ids)
 
 
 async def on_shutdown(engine: AsyncEngine) -> None:
@@ -38,12 +47,17 @@ def create_app(settings: Settings | None = None) -> BotApplication:
     resolved_settings = settings or get_settings()
     engine = create_engine(resolved_settings)
     session_factory = create_session_factory(engine)
+    user_store = UserStore()
 
     bot = Bot(
         token=resolved_settings.bot_token.get_secret_value(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    dispatcher = Dispatcher(session_factory=session_factory, engine=engine)
+    dispatcher = Dispatcher(
+        session_factory=session_factory,
+        engine=engine,
+        user_store=user_store,
+    )
     dispatcher.startup.register(on_startup)
     dispatcher.shutdown.register(on_shutdown)
     setup_routers(dispatcher)
@@ -53,4 +67,5 @@ def create_app(settings: Settings | None = None) -> BotApplication:
         settings=resolved_settings,
         engine=engine,
         session_factory=session_factory,
+        user_store=user_store,
     )

@@ -27,3 +27,8 @@ class UserRepository:
         self._session.add(user)
         await self._session.flush()
         return user
+
+    async def list_telegram_ids(self) -> list[int]:
+        """Return all persisted Telegram user ids."""
+        result = await self._session.execute(select(User.telegram_id).order_by(User.id))
+        return list(result.scalars().all())
