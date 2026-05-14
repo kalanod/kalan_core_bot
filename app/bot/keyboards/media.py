@@ -47,9 +47,9 @@ def build_media_score_text(*, approves: int, declines: int) -> str:
     """Return a 20-symbol score bar based on the approve share."""
     total = approves + declines
     if total <= 0:
-        return "🗿" * 10
+        return "❌" * 10
 
-    bar_width = 20
+    bar_width = 10
     otter_count = round((approves / total) * bar_width)
     otter_count = min(bar_width, max(0, otter_count))
     return "🦦" * otter_count + "🗿" * (bar_width - otter_count)
