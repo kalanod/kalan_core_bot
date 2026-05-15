@@ -80,3 +80,53 @@ class TextMessageService:
         )
         await self._session.commit()
         return text_message
+
+    async def find_replied_incoming_id(
+        self,
+        *,
+        telegram_chat_id: int,
+        telegram_message_id: int,
+    ) -> int | None:
+        """Resolve a replied Telegram message to the original incoming text message id.
+
+        Recipients reply to bot-created copies whose Telegram ids are local to their chats.
+        The persistent mirror record links those copies back to the original incoming message,
+        so reply threading continues to work after process restarts and cache loss.
+        """
+        text_message = await self._text_messages.get_by_chat_message(
+            telegram_chat_id=telegram_chat_id,
+            telegram_message_id=telegram_message_id,
+        )
+        if text_message is None:
+            return None
+        return text_message.mirrored_from_text_message_id or text_message.id
+
+    async def find_recipient_reply_message_id(
+        self,
+        *,
+        incoming_message_db_id: int,
+        recipient_telegram_id: int,
+    ) -> int | None:
+        """Return the Telegram message id that can be replied to in a recipient chat.
+
+        For the original sender, the reply target is their own incoming Telegram message.
+        For everyone else, the reply target is the recipient-local outgoing mirror previously
+        sent by the bot.
+        """
+        incoming_message = await self._text_messages.get_by_id(incoming_message_db_id)
+        if incoming_message is None:
+            return None
+
+        if (
+            incoming_message.direction == "incoming"
+            and incoming_message.sender_telegram_id == recipient_telegram_id
+        ):
+            return incoming_message.telegram_message_id
+
+        outgoing_message = await self._text_messages.get_outgoing_mirror_for_recipient(
+            incoming_text_message_id=incoming_message_db_id,
+            recipient_telegram_id=recipient_telegram_id,
+        )
+        if outgoing_message is None:
+            return None
+        return outgoing_message.telegram_message_id
