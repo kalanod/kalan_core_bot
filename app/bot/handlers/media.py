@@ -1,16 +1,21 @@
 """Handlers for supported Telegram media messages."""
 
 from aiogram import F, Router
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.bot.handlers.replies import (
+    REPLY_TARGET_NOT_FOUND_ERRORS,
+    resolve_recipient_broadcast_reply_message_id,
+    resolve_replied_incoming_ref,
+)
 from app.bot.keyboards.media import (
     build_media_delete_score_keyboard,
     build_media_reaction_keyboard,
     build_media_score_keyboard,
 )
-from app.bot.services import MediaMessageService, UserStore
+from app.bot.services import MediaMessageService, MessageReference, MessageReplyService, UserStore
 from app.bot.services.media_messages import MediaReactionToggleResult
 from app.bot.utils.media import extract_media
 
@@ -30,6 +35,16 @@ async def handle_media(
     sender_telegram_id = message.from_user.id
     if not await user_store.has_user(sender_telegram_id):
         return
+
+    reply_to_message = None
+    if message.reply_to_message is not None:
+        async with session_factory() as session:
+            reply_to_message = await resolve_replied_incoming_ref(
+                reply_service=MessageReplyService(session),
+                user_store=user_store,
+                chat_id=message.chat.id,
+                replied_message_id=message.reply_to_message.message_id,
+            )
 
     media = extract_media(message)
     if media is None:
@@ -74,6 +89,13 @@ async def handle_media(
             delivery_id=prepared_status.delivery.id,
         )
 
+    await user_store.remember_sent_broadcast_message(
+        incoming_message=MessageReference(kind="media", id=incoming_result.message.id),
+        recipient_telegram_id=sender_telegram_id,
+        chat_id=status_reply.chat.id,
+        bot_message_id=status_reply.message_id,
+    )
+
     await user_store.add_user(sender_telegram_id)
     recipient_ids = await user_store.other_users(sender_telegram_id)
 
@@ -88,21 +110,52 @@ async def handle_media(
             otter_callback_data=prepared_delivery.otter_callback_data,
             stone_face_callback_data=prepared_delivery.stone_face_callback_data,
         )
+        recipient_reply_message_id = None
+        if reply_to_message is not None:
+            async with session_factory() as session:
+                recipient_reply_message_id = await resolve_recipient_broadcast_reply_message_id(
+                    reply_service=MessageReplyService(session),
+                    user_store=user_store,
+                    incoming_message=reply_to_message,
+                    recipient_telegram_id=recipient_id,
+                )
+
         try:
-            if media.media_type == "photo":
-                sent_message = await message.bot.send_photo(
-                    chat_id=recipient_id,
-                    photo=media.file_id,
-                    caption=message.caption,
+            sent_message = await _send_media_message(
+                message=message,
+                recipient_id=recipient_id,
+                media_file_id=media.file_id,
+                media_type=media.media_type,
+                reply_markup=reply_markup,
+                reply_to_message_id=recipient_reply_message_id,
+            )
+        except TelegramBadRequest as error:
+            if recipient_reply_message_id is None or not any(
+                error_text in error.message for error_text in REPLY_TARGET_NOT_FOUND_ERRORS
+            ):
+                async with session_factory() as session:
+                    await MediaMessageService(session).register_delivery_failure(
+                        delivery_id=prepared_delivery.delivery.id,
+                        error=str(error),
+                    )
+                continue
+
+            try:
+                sent_message = await _send_media_message(
+                    message=message,
+                    recipient_id=recipient_id,
+                    media_file_id=media.file_id,
+                    media_type=media.media_type,
                     reply_markup=reply_markup,
+                    reply_to_message_id=None,
                 )
-            else:
-                sent_message = await message.bot.send_video(
-                    chat_id=recipient_id,
-                    video=media.file_id,
-                    caption=message.caption,
-                    reply_markup=reply_markup,
-                )
+            except TelegramAPIError as fallback_error:
+                async with session_factory() as session:
+                    await MediaMessageService(session).register_delivery_failure(
+                        delivery_id=prepared_delivery.delivery.id,
+                        error=str(fallback_error),
+                    )
+                continue
         except TelegramAPIError as error:
             async with session_factory() as session:
                 await MediaMessageService(session).register_delivery_failure(
@@ -124,6 +177,41 @@ async def handle_media(
                 mirrored_from_media_message_id=incoming_result.message.id,
                 delivery_id=prepared_delivery.delivery.id,
             )
+
+        await user_store.remember_sent_broadcast_message(
+            incoming_message=MessageReference(kind="media", id=incoming_result.message.id),
+            recipient_telegram_id=recipient_id,
+            chat_id=sent_message.chat.id,
+            bot_message_id=sent_message.message_id,
+        )
+
+
+async def _send_media_message(
+    *,
+    message: Message,
+    recipient_id: int,
+    media_file_id: str,
+    media_type: str,
+    reply_markup: object,
+    reply_to_message_id: int | None,
+) -> Message:
+    """Send a media message with one shared reply-aware code path."""
+    if media_type == "photo":
+        return await message.bot.send_photo(
+            chat_id=recipient_id,
+            photo=media_file_id,
+            caption=message.caption,
+            reply_markup=reply_markup,
+            reply_to_message_id=reply_to_message_id,
+        )
+
+    return await message.bot.send_video(
+        chat_id=recipient_id,
+        video=media_file_id,
+        caption=message.caption,
+        reply_markup=reply_markup,
+        reply_to_message_id=reply_to_message_id,
+    )
 
 
 @router.callback_query(F.data.startswith("mr:"))
