@@ -5,9 +5,12 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.bot.services import TextMessageService, UserStore
-
-REPLY_TARGET_NOT_FOUND_ERRORS = ("replied message", "reply message not found")
+from app.bot.handlers.replies import (
+    REPLY_TARGET_NOT_FOUND_ERRORS,
+    resolve_recipient_broadcast_reply_message_id,
+    resolve_replied_incoming_ref,
+)
+from app.bot.services import MessageReference, MessageReplyService, TextMessageService, UserStore
 
 router = Router(name="text")
 
@@ -24,11 +27,7 @@ async def resolve_replied_incoming_id(
     chat_id: int,
     replied_message_id: int,
 ) -> int | None:
-    """Resolve a replied Telegram message to the original incoming text message id.
-
-    The in-memory store is a fast path for the current process, while the database lookup is
-    authoritative and keeps reply threading working after deployments or bot restarts.
-    """
+    """Backward-compatible text-only reply resolver used by existing tests."""
     cached_id = await user_store.get_replied_incoming_id(
         chat_id=chat_id,
         bot_message_id=replied_message_id,
@@ -49,7 +48,7 @@ async def resolve_recipient_reply_message_id(
     incoming_message_db_id: int,
     recipient_telegram_id: int,
 ) -> int | None:
-    """Resolve the recipient-local Telegram message id that should be replied to."""
+    """Backward-compatible text-only recipient reply resolver used by existing tests."""
     cached_message_id = await user_store.get_recipient_reply_message_id(
         incoming_message_db_id=incoming_message_db_id,
         recipient_telegram_id=recipient_telegram_id,
@@ -77,11 +76,11 @@ async def handle_text(
     if not await user_store.has_user(sender_telegram_id):
         return
 
-    reply_to_text_message_id = None
+    reply_to_message = None
     if message.reply_to_message is not None:
         async with session_factory() as session:
-            reply_to_text_message_id = await resolve_replied_incoming_id(
-                text_service=TextMessageService(session),
+            reply_to_message = await resolve_replied_incoming_ref(
+                reply_service=MessageReplyService(session),
                 user_store=user_store,
                 chat_id=message.chat.id,
                 replied_message_id=message.reply_to_message.message_id,
@@ -94,7 +93,11 @@ async def handle_text(
             telegram_message_id=message.message_id,
             text=message.text,
             date=message.date,
-            reply_to_text_message_id=reply_to_text_message_id,
+            reply_to_text_message_id=(
+                reply_to_message.id
+                if reply_to_message is not None and reply_to_message.kind == "text"
+                else None
+            ),
         )
 
     await user_store.add_user(sender_telegram_id)
@@ -102,12 +105,12 @@ async def handle_text(
 
     for recipient_id in recipient_ids:
         recipient_reply_message_id = None
-        if reply_to_text_message_id is not None:
+        if reply_to_message is not None:
             async with session_factory() as session:
-                recipient_reply_message_id = await resolve_recipient_reply_message_id(
-                    text_service=TextMessageService(session),
+                recipient_reply_message_id = await resolve_recipient_broadcast_reply_message_id(
+                    reply_service=MessageReplyService(session),
                     user_store=user_store,
-                    incoming_message_db_id=reply_to_text_message_id,
+                    incoming_message=reply_to_message,
                     recipient_telegram_id=recipient_id,
                 )
 
@@ -118,9 +121,8 @@ async def handle_text(
                 reply_to_message_id=recipient_reply_message_id,
             )
         except TelegramBadRequest as exc:
-            if (
-                recipient_reply_message_id is None
-                or not any(error_text in exc.message for error_text in REPLY_TARGET_NOT_FOUND_ERRORS)
+            if recipient_reply_message_id is None or not any(
+                error_text in exc.message for error_text in REPLY_TARGET_NOT_FOUND_ERRORS
             ):
                 continue
 
@@ -143,11 +145,15 @@ async def handle_text(
                 text=message.text,
                 date=sent_message.date,
                 mirrored_from_text_message_id=incoming_result.message.id,
-                reply_to_text_message_id=reply_to_text_message_id,
+                reply_to_text_message_id=(
+                    reply_to_message.id
+                    if reply_to_message is not None and reply_to_message.kind == "text"
+                    else None
+                ),
             )
 
-        await user_store.remember_sent_message(
-            incoming_message_db_id=incoming_result.message.id,
+        await user_store.remember_sent_broadcast_message(
+            incoming_message=MessageReference(kind="text", id=incoming_result.message.id),
             recipient_telegram_id=recipient_id,
             chat_id=sent_message.chat.id,
             bot_message_id=sent_message.message_id,
