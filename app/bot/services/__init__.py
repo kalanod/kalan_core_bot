@@ -1,6 +1,7 @@
 """Service package exports."""
 
 from app.bot.services.kalans import KalanDeletionResult, KalanRegistrationResult, KalanService
+from app.bot.services.message_replies import MessageReference, MessageReplyService
 from app.bot.services.media_messages import (
     IncomingMediaRegistrationResult,
     MediaMessageService,
@@ -18,6 +19,8 @@ __all__ = [
     "IncomingMediaRegistrationResult",
     "IncomingTextRegistrationResult",
     "MediaMessageService",
+    "MessageReference",
+    "MessageReplyService",
     "MediaReactionToggleResult",
     "PreparedMediaDelivery",
     "TextMessageService",

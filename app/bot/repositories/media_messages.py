@@ -48,6 +48,46 @@ class MediaMessageRepository:
         await self._session.flush()
         return media_message
 
+    async def get_by_chat_message(
+        self,
+        *,
+        telegram_chat_id: int,
+        telegram_message_id: int,
+    ) -> MediaMessage | None:
+        """Return a media message stored for a Telegram chat/message pair, if any."""
+        result = await self._session.execute(
+            select(MediaMessage).where(
+                MediaMessage.telegram_chat_id == telegram_chat_id,
+                MediaMessage.telegram_message_id == telegram_message_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_id(self, media_message_id: int) -> MediaMessage | None:
+        """Return a media message by database id, if it exists."""
+        result = await self._session.execute(
+            select(MediaMessage).where(MediaMessage.id == media_message_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_outgoing_mirror_for_recipient(
+        self,
+        *,
+        incoming_media_message_id: int,
+        recipient_telegram_id: int,
+    ) -> MediaMessage | None:
+        """Return the recipient-local bot copy/status of an incoming media message."""
+        result = await self._session.execute(
+            select(MediaMessage)
+            .where(
+                MediaMessage.mirrored_from_media_message_id == incoming_media_message_id,
+                MediaMessage.recipient_telegram_id == recipient_telegram_id,
+                MediaMessage.direction.in_(("outgoing", "status")),
+            )
+            .order_by(MediaMessage.id.desc())
+        )
+        return result.scalars().first()
+
     async def create_delivery(
         self,
         *,
